@@ -1,2 +1,2 @@
-# widget_fadein
-FadeIn &amp; FadeOut animation widget for Flutter.
+# FadeIn widget
+A simple Flutter Fade In & Fade Out animation widget with configurable duration, delay and offset.
