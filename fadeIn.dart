@@ -1,5 +1,5 @@
 /// FadeIn animation with configurable duration, offset and fadeOut method.
-/// v 1.2 | 2022-04-19 (YYYY-MM-DD)
+/// v 1.3 | 2022-05-05
 /// Created by Vasiliy Atutov aka vSLY (https://github.com/vsly-ru)
 /// Based on EntranceFader by Marcin Szałek (https://fidev.io)
 
@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+/// Combined entrance animation with opacity (from [opacity]) and/or sliding (from an [offset])
 class FadeIn extends StatefulWidget {
   /// Skip the animation entirely and return child instead (e.g. for optimization)
   final bool skipAnimation;
@@ -21,16 +22,33 @@ class FadeIn extends StatefulWidget {
   /// Delay (ms) before playing the animation; (useful for chaining)
   final int delay;
 
-  /// Duration (ms) of the animation
-  final int duration;
+  /// duration of the animation
+  final Duration duration;
+
+  /// [0.0 - 1.0] Initial widget opacity (will be animated to 1.0)
+  final double opacity;
+
+  /// [0.0 - 1.0] Initial child scale (will be animated to 1.0)
+  final double scale;
+
+  /// play fade out animation instead
+  final bool isFadeOut;
+
+  /// child will be dismounted and container shrinked down to zero after the
+  /// fadeOut animation finished
+  final bool dismountAfterFadeOut;
 
   const FadeIn(
       {Key? key,
       this.child,
       this.offset = const Offset(0.0, 32.0),
       this.delay = 0,
-      this.duration = 400,
-      this.skipAnimation = false})
+      this.duration = const Duration(milliseconds: 333),
+      this.skipAnimation = false,
+      this.scale = 0.9,
+      this.opacity = 0.0,
+      this.isFadeOut = false,
+      this.dismountAfterFadeOut = false})
       : super(key: key);
 
   @override
@@ -41,6 +59,8 @@ class FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation _dxAnimation;
   late Animation _dyAnimation;
+  late Animation _opacityAnimation;
+  late Animation _scaleAnimation;
 
   // determine when the child shouldn't be mounted
   bool _erased = false;
@@ -49,26 +69,39 @@ class FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
   void initState() {
     super.initState();
     _controller = AnimationController(
-        vsync: this, duration: Duration(milliseconds: widget.duration));
+        vsync: this,
+        duration: widget.duration,
+        value: widget.isFadeOut ? 1.0 : 0.0);
     _dxAnimation =
         Tween(begin: widget.offset.dx, end: 0.0).animate(_controller);
     _dyAnimation =
         Tween(begin: widget.offset.dy, end: 0.0).animate(_controller);
-    if (widget.delay > 0) {
-      // delaying the animation
-      Future.delayed(Duration(milliseconds: widget.delay), () {
-        fadeIn(null);
-      });
-    } else {
-      // no delay before the animation
-      fadeIn(0.0);
+    _opacityAnimation =
+        Tween(begin: widget.opacity, end: 1.0).animate(_controller);
+    _scaleAnimation = Tween(begin: widget.scale, end: 1.0).animate(_controller);
+    Future.delayed(Duration(milliseconds: widget.delay), () {
+      if (widget.isFadeOut) {
+        playFadeOut(dismount: widget.dismountAfterFadeOut);
+      } else {
+        playFadeIn(null);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(FadeIn oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // log('didUpdateWidget', name: 'FadeIn');
+    if (widget.duration != oldWidget.duration) {
+      _controller.duration = widget.duration;
+      // TODO: update other fields
     }
   }
 
   /// play the fade in animation (could be awaited)
-  /// @from – start the animation from a specific progress point; Where 0.0 is invisible and 1.0 (100%) is fully faded in (opaque).
-  ///   Default (null) uses the current progress as a starting point;
-  FutureOr<void> fadeIn(double? from) async {
+  /// [from] (0.0 - 1.0) – start the animation from a specific value;
+  ///   null: By default uses current progress;
+  FutureOr<void> playFadeIn(double? from) async {
     if (mounted) {
       if (_erased) {
         // if the widget was previously "dismounted", rebuild the widget using animation controller.
@@ -79,33 +112,33 @@ class FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
       _controller.forward(from: from);
       // calculating the expected animation duration (ms) from a current/given progress to 1.0;
       final left = 1.0 - (from ?? _controller.value);
-      final duration = (left * widget.duration).ceil();
+      final duration = (left * widget.duration.inMilliseconds).ceil();
       await Future.delayed(Duration(milliseconds: duration));
     } else {
-      if (kDebugMode) throw ('Not yet mounted');
+      if (kDebugMode) print('FadeIn wasn\'t mounted');
     }
   }
 
   /// disappear animation (could be awaited)
-  /// @from – start the animation from a specific progress point; Where 0.0 is invisible and 1.0 (100%) is fully faded in (opaque).
-  ///   Default (null) uses the current progress as a starting point;
-  /// @erase – will "dismount" (like display:none in CSS) itself after fading out is finished.
-  ///   Can be used to animate
-  FutureOr<void> fadeOut(double? from, bool erase) async {
+  /// [from] (0.0 - 1.0) – start the animation from a specific value;
+  ///   null: By default uses current progress;
+  /// [dismount] – will "dismount" itself (like display:none in CSS)
+  /// by removing the child and shrinking itself
+  FutureOr<void> playFadeOut({double? from, bool dismount = false}) async {
     if (mounted) {
       _controller.reverse(from: from);
       // calculating the expected animation duration (ms) from a current/given progress to zero;
-      final leftDuration = (from ?? _controller.value) * (widget.duration + 1);
+      final leftDuration =
+          (from ?? _controller.value) * (widget.duration.inMilliseconds + 1);
       await Future.delayed(Duration(milliseconds: leftDuration.ceil()));
-      // check if the animation was (not) interrupted
-      if (_controller.value == 0.0 && erase) {
-        // rebuild the widget without an animation builder
+      if (dismount) {
+        // rebuild the widget without the animation builder and child
         setState(() {
           _erased = true;
         });
       }
     } else {
-      if (kDebugMode) throw ('Not yet mounted');
+      if (kDebugMode) print('FadeIn wasn\'t mounted');
     }
   }
 
@@ -121,13 +154,15 @@ class FadeInState extends State<FadeIn> with SingleTickerProviderStateMixin {
     if (_erased) return none;
     if (widget.skipAnimation) return widget.child ?? none;
     return AnimatedBuilder(
+      key: ValueKey<bool>(_erased),
       animation: _controller,
       builder: (context, child) => Opacity(
-        opacity: _controller.value,
+        opacity: _opacityAnimation.value,
         child: Transform(
+          alignment: FractionalOffset.center,
           transform: Matrix4.identity()
-            ..translate(_dxAnimation.value, _dyAnimation.value),
-          // ..setRotationZ(_dxAnimation.value / 25),
+            ..translate(_dxAnimation.value, _dyAnimation.value)
+            ..scale(_scaleAnimation.value),
           child: widget.child,
         ),
       ),
